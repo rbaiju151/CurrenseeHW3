@@ -1,0 +1,1083 @@
+I've been tasked with creating a small app that uses an API in some meaningful way. I'm quite interested by REST Countries API, and would like to do some sort of quick travel app focusing on some aspect of currency rates. Perhaps something like a currency comparer to see when it might be cheap historically to travel to a country. DO you have any ideas for features thi sapp might have. The app's scope should not go beyond what me and you working together could achieve in 2-2.5 hours
+
+Love this idea. REST Countries + currency data is a perfect scope for a sharp, impressive mini-app—and you’re right to think “historical cheapness” rather than just a boring live converter.
+
+Below are feature ideas that are realistic in ~2–2.5 hours, ranked from must-have MVP to stretch goals. I’ll also suggest a clean app concept you can pitch confidently.
+
+Core App Concept (Clean & Pitchable)
+
+“When Was It Cheap to Travel There?”
+A lightweight travel tool that shows how favorable a country’s currency has been historically relative to your home currency.
+
+“This app helps travelers understand whether now is historically a good time to visit a country based on exchange rate trends.”
+
+That sentence alone is gold for demos/interviews.
+
+MVP Features (Absolutely doable in 2 hours)
+1. Country Picker (REST Countries API)
+
+User selects a country
+
+Fetch:
+
+Country name
+
+Flag
+
+Currency code(s)
+
+Capital (optional polish)
+
+Automatically infer local currency from the country
+
+💡 This is where REST Countries shines and gives your app legitimacy.
+
+2. Home Currency Selector
+
+Simple dropdown (USD default)
+
+No need for fancy geolocation
+
+Hard-code a few common currencies if needed (USD, EUR, GBP)
+
+3. Historical Exchange Rate Snapshot
+
+Using a currency API (e.g. exchangerate.host, frankfurter, etc.):
+
+Show:
+
+Current exchange rate
+
+Rate 1 year ago
+
+Rate 3 years ago
+
+Rate 5 years ago
+
+Then compute:
+
+% change vs today
+
+Example:
+
+USD → JPY
+Today:        150 JPY
+1 year ago:   132 JPY  (+13.6%)
+5 years ago:  109 JPY  (+37.6%)
+
+
+This alone already answers:
+
+“Is this country cheap relative to the past?”
+
+4. “Travel Favorability Score” (Simple but clever)
+
+A normalized score like:
+
+Favorability = (Current rate – 5yr average) / std deviation
+
+
+But you can keep it simple:
+
+🟢 Very favorable (top 20%)
+
+🟡 Neutral
+
+🔴 Unfavorable (bottom 20%)
+
+You don’t need heavy stats—just make it explainable.
+
+High-Value Add-Ons (If You’re Moving Fast)
+5. Mini Trend Chart (Last 5 Years)
+
+Line chart of exchange rate
+
+Even a simple SVG or chart.js graph works
+
+Label “Stronger USD = cheaper travel”
+
+This visually sells the app.
+
+6. “Best Time in the Last X Years”
+
+Automatically compute:
+
+Best historical month/year to visit
+
+Worst historical time
+
+Example:
+
+“Best time to visit Japan (USD-based): Oct 2023”
+
+Very impressive for minimal extra work.
+
+7. Multi-Country Compare
+
+Select 2–3 countries:
+
+Rank them by current favorability
+
+Great for:
+
+“Where should I go if currency strength matters?”
+
+What NOT to Build (Time Traps 🚫)
+
+Avoid:
+
+Hotel prices
+
+Cost-of-living indices
+
+Inflation-adjusted PPP models
+
+Live flight data
+
+Budget calculators
+
+They explode scope and aren’t necessary to show insight.
+
+Suggested Final MVP Feature List (Perfect Scope)
+
+If I were you, I’d ship this:
+
+✅ Country picker (REST Countries)
+✅ Home currency selector
+✅ Current + historical rates (1y, 3y, 5y)
+✅ % change display
+✅ Favorability label (cheap / neutral / expensive)
+✅ Flag + currency info UI
+
+That’s 100% achievable and looks thoughtful, not rushed.
+
+How This Looks to Reviewers
+
+This app demonstrates:
+
+API integration
+
+Data transformation
+
+Historical reasoning (not just live data)
+
+UX thinking
+
+Clear product framing
+
+It reads as:
+
+“I didn’t just pull data—I answered a real user question.”
+
+If you want, next we can:
+
+Lock in exact APIs
+
+Define data models
+
+Sketch the UI
+
+Or even write the entire app step-by-step
+
+Just tell me your stack (React? Vanilla JS? Python + Flask?).
+
+
+
+
+
+Ok, let's get started with a MVP implementation of this app using Python, REST Countries, and exchangerate.host
+
+Awesome — Python + REST Countries + exchangerate.host is a clean MVP.
+
+One important heads-up: exchangerate.host is now run by APILayer and their docs show an access_key parameter for historical data (and generally “get a free key” is prominent).
+So I’ll build the MVP to work in either case:
+
+If it works keyless for you → great.
+
+If it requires a key → you set EXCHANGERATE_API_KEY and you’re done.
+
+Below is a Streamlit MVP (fastest to ship + nice UI). It does:
+
+Country picker (REST Countries)
+
+Home currency selector
+
+Auto-detect local currency for that country
+
+Show today, 1y, 3y, 5y historical rates + % difference
+
+A simple “cheap/neutral/expensive vs 1y average” indicator
+
+1) Create the project
+
+requirements.txt
+
+streamlit==1.41.1
+requests==2.32.3
+python-dateutil==2.9.0.post0
+
+
+app.py
+
+import os
+from datetime import date, timedelta
+
+import requests
+import streamlit as st
+from dateutil.relativedelta import relativedelta
+
+RESTCOUNTRIES_ALL = "https://restcountries.com/v3.1/all"
+EXCHANGE_BASE = "https://api.exchangerate.host"
+
+# ----------------------------
+# Helpers
+# ----------------------------
+
+def _get_json(url: str, params: dict | None = None, timeout: int = 15):
+    r = requests.get(url, params=params, timeout=timeout)
+    r.raise_for_status()
+    return r.json()
+
+@st.cache_data(ttl=24 * 3600)
+def load_countries():
+    """
+    REST Countries v3.1 returns currencies as an object keyed by currency code, e.g.
+    "currencies": {"JPY": {"name": "Japanese yen", "symbol": "¥"}}
+    We'll store a list of countries with a single 'primary' currency code (first key).
+    """
+    params = {
+        "fields": "name,cca2,currencies,flags,capital,region"
+    }
+    data = _get_json(RESTCOUNTRIES_ALL, params=params)
+
+    countries = []
+    for c in data:
+        name = (c.get("name") or {}).get("common")
+        cca2 = c.get("cca2")
+        flags = (c.get("flags") or {}).get("png") or (c.get("flags") or {}).get("svg")
+        capital = (c.get("capital") or [None])[0]
+        region = c.get("region")
+
+        currencies_obj = c.get("currencies") or {}
+        currency_codes = list(currencies_obj.keys())
+        if not name or not cca2 or not currency_codes:
+            continue
+
+        # pick the first currency as "primary" (good enough for MVP)
+        primary_code = currency_codes[0]
+        primary_name = (currencies_obj.get(primary_code) or {}).get("name") or primary_code
+        primary_symbol = (currencies_obj.get(primary_code) or {}).get("symbol") or ""
+
+        countries.append({
+            "name": name,
+            "cca2": cca2,
+            "flag_url": flags,
+            "capital": capital,
+            "region": region,
+            "currency_code": primary_code,
+            "currency_name": primary_name,
+            "currency_symbol": primary_symbol,
+        })
+
+    # sort for dropdown UX
+    countries.sort(key=lambda x: x["name"])
+    return countries
+
+def exchangerate_params(extra: dict | None = None) -> dict:
+    """
+    exchangerate.host (APILayer) commonly uses access_key. We'll include it if present.
+    """
+    params = {}
+    api_key = os.getenv("EXCHANGERATE_API_KEY", "").strip()
+    if api_key:
+        params["access_key"] = api_key
+    if extra:
+        params.update(extra)
+    return params
+
+def get_rate_on(day: date, base: str, quote: str) -> float:
+    """
+    Try a few common formats:
+      - /historical?date=YYYY-MM-DD&base=USD&symbols=JPY
+      - /YYYY-MM-DD?base=USD&symbols=JPY   (some exchange APIs use this)
+    We'll attempt historical endpoint first per docs.
+    """
+    d = day.isoformat()
+
+    # 1) documented historical style
+    try:
+        j = _get_json(
+            f"{EXCHANGE_BASE}/historical",
+            params=exchangerate_params({"date": d, "base": base, "symbols": quote}),
+        )
+        # common shapes:
+        # { "success": true, "rates": {"JPY": 150.0}, ... }
+        rates = j.get("rates") or {}
+        if quote in rates:
+            return float(rates[quote])
+    except Exception:
+        pass
+
+    # 2) date-in-path style
+    j = _get_json(
+        f"{EXCHANGE_BASE}/{d}",
+        params=exchangerate_params({"base": base, "symbols": quote}),
+    )
+    rates = j.get("rates") or {}
+    if quote not in rates:
+        raise RuntimeError(f"No rate returned for {base}->{quote} on {d}. Response keys: {list(rates.keys())[:5]}")
+    return float(rates[quote])
+
+def pct_change(current: float, past: float) -> float:
+    return (current - past) / past * 100.0
+
+# ----------------------------
+# UI
+# ----------------------------
+
+st.set_page_config(page_title="Travel FX: When Was It Cheap?", page_icon="💱", layout="centered")
+
+st.title("💱 Travel FX MVP")
+st.caption("Pick a country, and see if its currency is historically favorable vs your home currency.")
+
+countries = load_countries()
+
+home_currency = st.selectbox(
+    "Home currency",
+    ["USD", "EUR", "GBP", "CAD", "AUD", "JPY", "CHF", "INR"],
+    index=0,
+    help="This is the currency you hold/spend (e.g., USD).",
+)
+
+country_names = [c["name"] for c in countries]
+chosen_name = st.selectbox("Destination country", country_names, index=country_names.index("Japan") if "Japan" in country_names else 0)
+
+chosen = next(c for c in countries if c["name"] == chosen_name)
+dest_currency = chosen["currency_code"]
+
+colA, colB = st.columns([1, 3], vertical_alignment="center")
+with colA:
+    if chosen["flag_url"]:
+        st.image(chosen["flag_url"], width=96)
+with colB:
+    st.subheader(f"{chosen['name']} — {chosen['region'] or 'Region unknown'}")
+    st.write(f"**Capital:** {chosen['capital'] or '—'}")
+    sym = f" ({chosen['currency_symbol']})" if chosen["currency_symbol"] else ""
+    st.write(f"**Currency:** {dest_currency} — {chosen['currency_name']}{sym}")
+
+st.divider()
+
+st.markdown(f"### Exchange Rate: **{home_currency} → {dest_currency}**")
+
+today = date.today()
+d1y = today - relativedelta(years=1)
+d3y = today - relativedelta(years=3)
+d5y = today - relativedelta(years=5)
+
+with st.spinner("Fetching exchange rates..."):
+    try:
+        r_today = get_rate_on(today, home_currency, dest_currency)
+        r_1y = get_rate_on(d1y, home_currency, dest_currency)
+        r_3y = get_rate_on(d3y, home_currency, dest_currency)
+        r_5y = get_rate_on(d5y, home_currency, dest_currency)
+    except requests.HTTPError as e:
+        st.error("API request failed. If exchangerate.host requires a key, set EXCHANGERATE_API_KEY and restart.")
+        st.exception(e)
+        st.stop()
+    except Exception as e:
+        st.error("Couldn’t fetch rates. If exchangerate.host requires a key, set EXCHANGERATE_API_KEY and restart.")
+        st.exception(e)
+        st.stop()
+
+k1, k2, k3 = st.columns(3)
+k1.metric("Today", f"{r_today:,.4f}")
+k2.metric("1 year ago", f"{r_1y:,.4f}", f"{pct_change(r_today, r_1y):+.1f}%")
+k3.metric("3 years ago", f"{r_3y:,.4f}", f"{pct_change(r_today, r_3y):+.1f}%")
+
+st.metric("5 years ago", f"{r_5y:,.4f}", f"{pct_change(r_today, r_5y):+.1f}%")
+
+st.divider()
+
+# Simple favorability label vs 1-year anchor
+# Interpretation:
+# - If home->dest rate is higher, your home currency buys MORE dest currency => travel feels "cheaper" in FX terms.
+diff_vs_1y = pct_change(r_today, r_1y)
+
+if diff_vs_1y >= 7.5:
+    label = "🟢 More favorable than 1y ago"
+elif diff_vs_1y <= -7.5:
+    label = "🔴 Less favorable than 1y ago"
+else:
+    label = "🟡 Similar to 1y ago"
+
+st.subheader("Snapshot verdict")
+st.write(label)
+st.caption(
+    "Rule of thumb: if the rate **home→destination** is higher than before, your home currency buys more local currency. "
+    "This ignores inflation/cost-of-living—MVP focuses purely on FX."
+)
+
+with st.expander("If exchangerate.host asks for an API key"):
+    st.code(
+        "Windows (PowerShell):\n"
+        '$env:EXCHANGERATE_API_KEY="YOUR_KEY"\n'
+        "streamlit run app.py\n\n"
+        "macOS/Linux:\n"
+        'export EXCHANGERATE_API_KEY="YOUR_KEY"\n'
+        "streamlit run app.py\n",
+        language="bash",
+    )
+
+2) Run it
+python -m venv .venv
+# Windows:
+.venv\Scripts\activate
+# macOS/Linux:
+source .venv/bin/activate
+
+pip install -r requirements.txt
+streamlit run app.py
+
+
+If exchangerate.host requires a key, their docs show a signup flow and access_key usage.
+
+3) What we can add next (still within time)
+
+Pick one “wow” feature that’s still light:
+
+Mini trend chart for last 365 days (if /timeseries works for your plan; docs/community references show a timeseries endpoint).
+
+Compare 2–3 countries and rank “most favorable now”
+
+Best month in last year (compute min/max from the timeseries)
+
+Tell me which one you want and I’ll extend the code in the same style.
+
+
+
+MAKE BIG SWITCH TO NEW CURRENCYAPI
+
+actually lets use currencyapi instead, with documentation here: https://currencyapi.com/docs
+
+Cool — currencyapi is much cleaner for this use case.
+
+Per their docs:
+
+Latest: GET https://api.currencyapi.com/v3/latest
+
+Historical: GET https://api.currencyapi.com/v3/historical?date=YYYY-MM-DD
+
+Auth: recommended via HTTP header apikey: YOUR-API-KEY
+
+Below is your TravelApp.py rewritten to use currencyapi and also to prevent accidental API spam:
+
+Adds @st.cache_data to cache FX results
+
+Adds a “Fetch FX snapshot” button so Streamlit reruns don’t trigger API calls automatically
+
+Uses base_currency + currencies exactly as currencyapi describes
+
+1) Update api_keys.py
+
+Make sure your local (gitignored) api_keys.py contains:
+
+CURRENCYAPI_KEY = "YOUR_KEY_HERE"
+
+
+(And .gitignore should include api_keys.py.)
+
+2) Replace your TravelApp.py with this
+import time
+from datetime import date
+
+import requests
+import streamlit as st
+from dateutil.relativedelta import relativedelta
+
+try:
+    from api_keys import CURRENCYAPI_KEY
+except ImportError:
+    CURRENCYAPI_KEY = None
+
+RESTCOUNTRIES_ALL = "https://restcountries.com/v3.1/all"
+CURRENCYAPI_BASE = "https://api.currencyapi.com/v3"
+
+# ----------------------------
+# Helpers
+# ----------------------------
+
+def _currencyapi_headers() -> dict:
+    """
+    currencyapi supports api key via header 'apikey' (recommended) or query param.
+    We'll use header auth. :contentReference[oaicite:4]{index=4}
+    """
+    if not CURRENCYAPI_KEY:
+        raise RuntimeError(
+            "Missing CURRENCYAPI_KEY. Create api_keys.py with CURRENCYAPI_KEY='your_key'."
+        )
+    return {"apikey": CURRENCYAPI_KEY}
+
+def _get_json(url: str, params: dict | None = None, headers: dict | None = None, timeout: int = 15):
+    r = requests.get(url, params=params, headers=headers, timeout=timeout)
+    r.raise_for_status()
+    return r.json()
+
+@st.cache_data(ttl=24 * 3600)
+def load_countries():
+    params = {"fields": "name,cca2,currencies,flags,capital,region"}
+    data = _get_json(RESTCOUNTRIES_ALL, params=params)
+
+    countries = []
+    for c in data:
+        name = (c.get("name") or {}).get("common")
+        cca2 = c.get("cca2")
+        flags = (c.get("flags") or {}).get("png") or (c.get("flags") or {}).get("svg")
+        capital = (c.get("capital") or [None])[0]
+        region = c.get("region")
+
+        currencies_obj = c.get("currencies") or {}
+        currency_codes = list(currencies_obj.keys())
+        if not name or not cca2 or not currency_codes:
+            continue
+
+        primary_code = currency_codes[0]
+        primary_name = (currencies_obj.get(primary_code) or {}).get("name") or primary_code
+        primary_symbol = (currencies_obj.get(primary_code) or {}).get("symbol") or ""
+
+        countries.append({
+            "name": name,
+            "cca2": cca2,
+            "flag_url": flags,
+            "capital": capital,
+            "region": region,
+            "currency_code": primary_code,
+            "currency_name": primary_name,
+            "currency_symbol": primary_symbol,
+        })
+
+    countries.sort(key=lambda x: x["name"])
+    return countries
+
+def _parse_currencyapi_rate(resp_json: dict, currency: str) -> float:
+    """
+    currencyapi response has keys: meta + data. 'data' contains currency entries keyed by code,
+    each with a 'value' field (rate vs base_currency). :contentReference[oaicite:5]{index=5}
+    """
+    data = resp_json.get("data") or {}
+    node = data.get(currency)
+    if not node or "value" not in node:
+        raise RuntimeError(f"currencyapi response missing data for {currency}. Got keys: {list(data.keys())[:10]}")
+    return float(node["value"])
+
+@st.cache_data(ttl=24 * 3600)
+def get_pair_rate_on_day(day: date, home: str, dest: str) -> float:
+    """
+    Returns: 1 unit of 'home' equals X units of 'dest'
+
+    Uses currencyapi:
+      - /v3/latest with base_currency + currencies :contentReference[oaicite:6]{index=6}
+      - /v3/historical with date + base_currency + currencies :contentReference[oaicite:7]{index=7}
+    Auth via header 'apikey'. :contentReference[oaicite:8]{index=8}
+    """
+    if home == dest:
+        return 1.0
+
+    headers = _currencyapi_headers()
+
+    if day == date.today():
+        url = f"{CURRENCYAPI_BASE}/latest"
+        params = {"base_currency": home, "currencies": dest}
+        j = _get_json(url, params=params, headers=headers)
+        return _parse_currencyapi_rate(j, dest)
+
+    url = f"{CURRENCYAPI_BASE}/historical"
+    params = {"date": day.isoformat(), "base_currency": home, "currencies": dest}
+    j = _get_json(url, params=params, headers=headers)
+    return _parse_currencyapi_rate(j, dest)
+
+def pct_change(current: float, past: float) -> float:
+    return (current - past) / past * 100.0
+
+# ----------------------------
+# UI
+# ----------------------------
+
+st.set_page_config(page_title="Travel FX: When Was It Cheap?", page_icon="💱", layout="centered")
+
+st.title("💱 Travel FX MVP")
+st.caption("Pick a country, and see if its currency is historically favorable vs your home currency.")
+
+with st.sidebar:
+    st.subheader("Quota safety")
+    show_cache_debug = st.toggle("Show cache debug", value=False)
+    if st.button("Clear cached data"):
+        st.cache_data.clear()
+        st.success("Cleared Streamlit cache. Next fetch will hit the APIs again.")
+
+countries = load_countries()
+
+home_currency = st.selectbox(
+    "Home currency",
+    ["USD", "EUR", "GBP", "CAD", "AUD", "JPY", "CHF", "INR"],
+    index=0,
+    help="This is the currency you hold/spend (e.g., USD).",
+)
+
+country_names = [c["name"] for c in countries]
+chosen_name = st.selectbox(
+    "Destination country",
+    country_names,
+    index=country_names.index("Japan") if "Japan" in country_names else 0
+)
+
+chosen = next(c for c in countries if c["name"] == chosen_name)
+dest_currency = chosen["currency_code"]
+
+colA, colB = st.columns([1, 3], vertical_alignment="center")
+with colA:
+    if chosen["flag_url"]:
+        st.image(chosen["flag_url"], width=96)
+with colB:
+    st.subheader(f"{chosen['name']} — {chosen['region'] or 'Region unknown'}")
+    st.write(f"**Capital:** {chosen['capital'] or '—'}")
+    sym = f" ({chosen['currency_symbol']})" if chosen["currency_symbol"] else ""
+    st.write(f"**Currency:** {dest_currency} — {chosen['currency_name']}{sym}")
+
+st.divider()
+st.markdown(f"### Exchange Rate: **{home_currency} → {dest_currency}**")
+
+today = date.today()
+d1y = today - relativedelta(years=1)
+d3y = today - relativedelta(years=3)
+d5y = today - relativedelta(years=5)
+
+fetch = st.button("Fetch FX snapshot")
+
+if not fetch:
+    st.info("Click **Fetch FX snapshot** to call currencyapi (prevents Streamlit rerun-spam).")
+    st.stop()
+
+with st.spinner("Fetching exchange rates…"):
+    t0 = time.perf_counter()
+    try:
+        r_today = get_pair_rate_on_day(today, home_currency, dest_currency)
+        r_1y    = get_pair_rate_on_day(d1y,   home_currency, dest_currency)
+        r_3y    = get_pair_rate_on_day(d3y,   home_currency, dest_currency)
+        r_5y    = get_pair_rate_on_day(d5y,   home_currency, dest_currency)
+    except requests.HTTPError as e:
+        if getattr(e.response, "status_code", None) == 429:
+            st.error("429 Too Many Requests: you’re being throttled. Try again after a short wait.")
+        else:
+            st.error("HTTP error from currencyapi.")
+        st.exception(e)
+        st.stop()
+    except Exception as e:
+        st.error("Couldn’t fetch rates (check API key, currency codes, or plan limits).")
+        st.exception(e)
+        st.stop()
+    finally:
+        st.session_state["last_fetch_s"] = round(time.perf_counter() - t0, 3)
+
+k1, k2, k3 = st.columns(3)
+k1.metric("Today", f"{r_today:,.4f}")
+k2.metric("1 year ago", f"{r_1y:,.4f}", f"{pct_change(r_today, r_1y):+.1f}%")
+k3.metric("3 years ago", f"{r_3y:,.4f}", f"{pct_change(r_today, r_3y):+.1f}%")
+st.metric("5 years ago", f"{r_5y:,.4f}", f"{pct_change(r_today, r_5y):+.1f}%")
+
+st.divider()
+
+diff_vs_1y = pct_change(r_today, r_1y)
+if diff_vs_1y >= 7.5:
+    label = "🟢 More favorable than 1y ago"
+elif diff_vs_1y <= -7.5:
+    label = "🔴 Less favorable than 1y ago"
+else:
+    label = "🟡 Similar to 1y ago"
+
+st.subheader("Snapshot verdict")
+st.write(label)
+st.caption(
+    "Rule of thumb: if the rate **home→destination** is higher than before, your home currency buys more local currency. "
+    "This ignores inflation/cost-of-living—MVP focuses purely on FX."
+)
+
+if show_cache_debug:
+    st.divider()
+    st.subheader("Cache debug")
+    st.write("Last fetch runtime (seconds):", st.session_state.get("last_fetch_s"))
+    st.write(
+        "Caching check: click **Fetch FX snapshot** again without changing inputs — it should be much faster and should not consume new API calls for the same parameters."
+    )
+
+Notes that will save you time
+
+currencyapi supports base currency selection via base_currency and limiting results via currencies
+
+Using the header apikey: ... avoids exposing the key in URLs/logs
+
+If you want, next upgrade (still small): use their /v3/range endpoint to pull the last year as a series and render a mini chart + best/worst day/month.
+
+
+
+
+
+
+Ok, looks like everything is working. Any sort of features that require daily rates will need a paid plan, so let's at least implement the multi-country compare feature and I think we should be done. Also let's change the title of the site to "Currensee"
+I'm not sure what the new feature did. Here is the output from comparing some countries, but it looks like most of the data didn't load. Why don't you just write the code all out for me so we are on the same page. While you are at it, remove the cache debug screen and change the tip bar for fetch fx snapshot to be something helpful to the user instead of "Click Fetch FX snapshot to call currencyapi (prevents Streamlit rerun-spam)."
+
+
+You’re seeing all those None cells because the compare code (as written earlier) accidentally created different column names per destination (e.g., Today (USD→JPY) and Today (USD→AUD)), so the DataFrame ended up wide, with each row only filling “its” column and leaving the rest as None.
+
+Fix: in the compare table, use consistent column names for every row:
+
+Today Rate
+
+~1y Ago Rate
+
+% vs ~1y
+
+Also: I’ll give you one clean, complete file with:
+
+Title: Currensee
+
+Single-country snapshot (Today/1y/3y/5y)
+
+Multi-country compare (Today vs ~1y)
+
+Caching stays (quietly) on the API functions to protect your quota
+
+No cache debug screen
+
+A better user tip instead of the “rerun-spam” message
+
+Below is the full code. Replace your current app file with this.
+
+import time
+from datetime import date
+
+import requests
+import streamlit as st
+from dateutil.relativedelta import relativedelta
+
+# ---- Local secret (gitignored) ----
+# api_keys.py should contain:
+#   CURRENCYAPI_KEY = "YOUR_KEY"
+try:
+    from api_keys import CURRENCYAPI_KEY
+except ImportError:
+    CURRENCYAPI_KEY = None
+
+RESTCOUNTRIES_ALL = "https://restcountries.com/v3.1/all"
+CURRENCYAPI_BASE = "https://api.currencyapi.com/v3"
+
+
+# ----------------------------
+# Helpers
+# ----------------------------
+
+def _currencyapi_headers() -> dict:
+    # currencyapi supports api key via header 'apikey'
+    if not CURRENCYAPI_KEY:
+        raise RuntimeError(
+            "Missing CURRENCYAPI_KEY. Create api_keys.py with CURRENCYAPI_KEY='your_key'."
+        )
+    return {"apikey": CURRENCYAPI_KEY}
+
+
+def _get_json(url: str, params: dict | None = None, headers: dict | None = None, timeout: int = 15):
+    r = requests.get(url, params=params, headers=headers, timeout=timeout)
+    r.raise_for_status()
+    return r.json()
+
+
+@st.cache_data(ttl=24 * 3600)
+def load_countries():
+    params = {"fields": "name,cca2,currencies,flags,capital,region"}
+    data = _get_json(RESTCOUNTRIES_ALL, params=params)
+
+    countries = []
+    for c in data:
+        name = (c.get("name") or {}).get("common")
+        cca2 = c.get("cca2")
+        flags = (c.get("flags") or {}).get("png") or (c.get("flags") or {}).get("svg")
+        capital = (c.get("capital") or [None])[0]
+        region = c.get("region")
+
+        currencies_obj = c.get("currencies") or {}
+        currency_codes = list(currencies_obj.keys())
+        if not name or not cca2 or not currency_codes:
+            continue
+
+        primary_code = currency_codes[0]
+        primary_name = (currencies_obj.get(primary_code) or {}).get("name") or primary_code
+        primary_symbol = (currencies_obj.get(primary_code) or {}).get("symbol") or ""
+
+        countries.append({
+            "name": name,
+            "cca2": cca2,
+            "flag_url": flags,
+            "capital": capital,
+            "region": region,
+            "currency_code": primary_code,
+            "currency_name": primary_name,
+            "currency_symbol": primary_symbol,
+        })
+
+    countries.sort(key=lambda x: x["name"])
+    return countries
+
+
+def _parse_currencyapi_rate(resp_json: dict, currency: str) -> float:
+    data = resp_json.get("data") or {}
+    node = data.get(currency)
+    if not node or "value" not in node:
+        raise RuntimeError(
+            f"currencyapi response missing data for {currency}. "
+            f"Got keys: {list(data.keys())[:10]}"
+        )
+    return float(node["value"])
+
+
+@st.cache_data(ttl=24 * 3600)
+def get_pair_rate_on_day(day: date, home: str, dest: str) -> float:
+    """
+    Returns: 1 unit of 'home' equals X units of 'dest'
+
+    currencyapi endpoints:
+      /latest?base_currency=HOME&currencies=DEST
+      /historical?date=YYYY-MM-DD&base_currency=HOME&currencies=DEST
+    """
+    if home == dest:
+        return 1.0
+
+    headers = _currencyapi_headers()
+
+    if day == date.today():
+        url = f"{CURRENCYAPI_BASE}/latest"
+        params = {"base_currency": home, "currencies": dest}
+        j = _get_json(url, params=params, headers=headers)
+        return _parse_currencyapi_rate(j, dest)
+
+    url = f"{CURRENCYAPI_BASE}/historical"
+    params = {"date": day.isoformat(), "base_currency": home, "currencies": dest}
+    j = _get_json(url, params=params, headers=headers)
+    return _parse_currencyapi_rate(j, dest)
+
+
+def pct_change(current: float, past: float) -> float:
+    return (current - past) / past * 100.0
+
+
+def favorability_label(diff_vs_1y: float) -> str:
+    # Simple MVP thresholds
+    if diff_vs_1y >= 7.5:
+        return "🟢 More favorable than ~1y ago"
+    if diff_vs_1y <= -7.5:
+        return "🔴 Less favorable than ~1y ago"
+    return "🟡 Similar to ~1y ago"
+
+
+# ----------------------------
+# UI
+# ----------------------------
+
+st.set_page_config(page_title="Currensee", page_icon="💱", layout="centered")
+
+st.title("💱 Currensee")
+st.caption("A quick way to check whether a destination’s exchange rate is historically favorable.")
+
+countries = load_countries()
+
+home_currency = st.selectbox(
+    "Home currency",
+    ["USD", "EUR", "GBP", "CAD", "AUD", "JPY", "CHF", "INR"],
+    index=0,
+    help="The currency you earn/spend (e.g., USD).",
+)
+
+country_names = [c["name"] for c in countries]
+chosen_name = st.selectbox(
+    "Primary destination country",
+    country_names,
+    index=country_names.index("Japan") if "Japan" in country_names else 0,
+)
+
+chosen = next(c for c in countries if c["name"] == chosen_name)
+dest_currency = chosen["currency_code"]
+
+colA, colB = st.columns([1, 3], vertical_alignment="center")
+with colA:
+    if chosen["flag_url"]:
+        st.image(chosen["flag_url"], width=96)
+with colB:
+    st.subheader(f"{chosen['name']} — {chosen['region'] or 'Region unknown'}")
+    st.write(f"**Capital:** {chosen['capital'] or '—'}")
+    sym = f" ({chosen['currency_symbol']})" if chosen["currency_symbol"] else ""
+    st.write(f"**Currency:** {dest_currency} — {chosen['currency_name']}{sym}")
+
+st.divider()
+
+st.markdown(f"### Snapshot: **{home_currency} → {dest_currency}**")
+
+today = date.today()
+d1y = today - relativedelta(years=1)
+d3y = today - relativedelta(years=3)
+d5y = today - relativedelta(years=5)
+
+fetch_single = st.button("Fetch snapshot for primary destination")
+
+if not fetch_single:
+    st.info(
+        "Use **Fetch snapshot** to pull current and historical rates (today, ~1y, ~3y, ~5y). "
+        "Tip: try a few destinations to see which ones are more favorable vs last year."
+    )
+else:
+    with st.spinner("Fetching exchange rates…"):
+        t0 = time.perf_counter()
+        try:
+            r_today = get_pair_rate_on_day(today, home_currency, dest_currency)
+            r_1y = get_pair_rate_on_day(d1y, home_currency, dest_currency)
+            r_3y = get_pair_rate_on_day(d3y, home_currency, dest_currency)
+            r_5y = get_pair_rate_on_day(d5y, home_currency, dest_currency)
+        except requests.HTTPError as e:
+            if getattr(e.response, "status_code", None) == 429:
+                st.error("Too many requests (429). You may be temporarily throttled — try again in a bit.")
+            else:
+                st.error("HTTP error from currencyapi.")
+            st.exception(e)
+            st.stop()
+        except Exception as e:
+            st.error("Couldn’t fetch rates (check API key, currency codes, or plan limits).")
+            st.exception(e)
+            st.stop()
+        finally:
+            st.session_state["single_fetch_s"] = round(time.perf_counter() - t0, 3)
+
+    k1, k2, k3 = st.columns(3)
+    k1.metric("Today", f"{r_today:,.4f}")
+    k2.metric("~1 year ago", f"{r_1y:,.4f}", f"{pct_change(r_today, r_1y):+.1f}%")
+    k3.metric("~3 years ago", f"{r_3y:,.4f}", f"{pct_change(r_today, r_3y):+.1f}%")
+    st.metric("~5 years ago", f"{r_5y:,.4f}", f"{pct_change(r_today, r_5y):+.1f}%")
+
+    st.subheader("Verdict")
+    diff = pct_change(r_today, r_1y)
+    st.write(favorability_label(diff))
+    st.caption(
+        "Rule of thumb: if **home→destination** is higher than before, your home currency buys more local currency. "
+        "This MVP ignores inflation and local price changes."
+    )
+
+st.divider()
+
+# ----------------------------
+# Multi-country compare
+# ----------------------------
+
+st.subheader("Multi-country compare")
+st.caption(
+    "Compare **today vs ~1 year ago** across multiple destinations. "
+    "Sorted by most favorable (largest increase in home→local rate)."
+)
+
+# Build labels like "Japan (JPY)"
+name_to_country = {c["name"]: c for c in countries}
+labels = [f"{c['name']} ({c['currency_code']})" for c in countries]
+
+default_labels = []
+for l in labels:
+    if l.startswith("Japan ("):
+        default_labels.append(l)
+        break
+
+selected_labels = st.multiselect(
+    "Select destination countries to compare",
+    options=labels,
+    default=default_labels,
+    max_selections=8,
+)
+
+fetch_compare = st.button("Compare selected countries")
+
+if fetch_compare:
+    if not selected_labels:
+        st.warning("Pick at least one destination country.")
+    else:
+        with st.spinner("Fetching comparison snapshot…"):
+            t0 = time.perf_counter()
+            rows = []
+            try:
+                for lab in selected_labels:
+                    # parse "Country (CCY)" -> "Country"
+                    name = lab.rsplit(" (", 1)[0]
+                    c = name_to_country.get(name)
+                    if not c:
+                        continue
+
+                    dest = c["currency_code"]
+
+                    if home_currency == dest:
+                        r_today = r_1y = 1.0
+                    else:
+                        r_today = get_pair_rate_on_day(today, home_currency, dest)
+                        r_1y = get_pair_rate_on_day(d1y, home_currency, dest)
+
+                    change = pct_change(r_today, r_1y)
+
+                    rows.append({
+                        "Country": c["name"],
+                        "Currency": dest,
+                        "Today Rate": r_today,
+                        "~1y Ago Rate": r_1y,
+                        "% vs ~1y": change,
+                        "Verdict": favorability_label(change),
+                    })
+
+            except requests.HTTPError as e:
+                if getattr(e.response, "status_code", None) == 429:
+                    st.error("Too many requests (429). You may be temporarily throttled — try again in a bit.")
+                else:
+                    st.error("HTTP error from currencyapi.")
+                st.exception(e)
+                st.stop()
+            except Exception as e:
+                st.error("Couldn’t fetch comparison rates.")
+                st.exception(e)
+                st.stop()
+            finally:
+                st.session_state["compare_fetch_s"] = round(time.perf_counter() - t0, 3)
+
+        # Sort and display
+        rows.sort(key=lambda r: r["% vs ~1y"], reverse=True)
+
+        # Render a clean table (no per-destination columns)
+        st.dataframe(
+            [
+                {
+                    "Country": r["Country"],
+                    "Currency": r["Currency"],
+                    f"Today ({home_currency}→local)": f"{r['Today Rate']:,.4f}",
+                    f"~1y Ago ({home_currency}→local)": f"{r['~1y Ago Rate']:,.4f}",
+                    "% vs ~1y": f"{r['% vs ~1y']:+.1f}%",
+                    "Verdict": r["Verdict"],
+                }
+                for r in rows
+            ],
+            use_container_width=True,
+        )
+
+        top = rows[0]
+        st.success(
+            f"Most favorable now (vs ~1y): **{top['Country']} ({top['Currency']})** "
+            f"at **{top['% vs ~1y']:+.1f}%**"
+        )
+        st.caption(
+            "Note: more favorable here means your home currency buys more of the local currency than it did ~1 year ago."
+        )
+
+Why this fixes your “mostly None” table
+
+The compare table now uses one consistent set of columns for all rows.
+
+We don’t create a separate column for each destination’s currency pair, so nothing gets sparse.
+
+If you want one more tiny polish (totally optional): I can show each country’s flag above the compare results (Streamlit tables don’t embed images nicely, but we can do a clean card/grid view).
