@@ -1,0 +1,15 @@
+# Secrets
+api_keys.py
+
+# Virtual environments
+.venv/
+env/
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# OS junk
+.DS_Store
+Thumbs.db
